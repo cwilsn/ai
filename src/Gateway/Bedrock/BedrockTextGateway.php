@@ -672,6 +672,10 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
 
         $providerOptions = $options?->providerOptions(Lab::Bedrock) ?? [];
 
+        if ($schemaTools !== null) {
+            $instructions = ($instructions ? $instructions."\n\n" : '').'When you are ready to provide your final answer, you must return it by calling the '.self::STRUCTURED_OUTPUT_TOOL.' tool. Do not return the final answer as plain text.';
+        }
+
         if ($instructions) {
             $parameters['system'] = [['text' => $instructions]];
         }
@@ -812,17 +816,14 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
     /**
      * Build Bedrock's toolConfig for the current step.
      *
-     * When a schema is present, toolChoice is only forced to the synthetic tool on the
-     * final step so real tools can be invoked on earlier iterations.
+     * Use automatic selection for structured output since some models reject forced tool choice.
      */
     protected function buildToolConfig(?array $schemaTools, ?array $formattedTools, bool $toolsEmpty, bool $isFinalStep): ?array
     {
         if ($schemaTools !== null) {
             return [
                 'tools' => $schemaTools,
-                'toolChoice' => ($isFinalStep || $toolsEmpty)
-                    ? ['tool' => ['name' => self::STRUCTURED_OUTPUT_TOOL]]
-                    : ['auto' => []],
+                'toolChoice' => ['auto' => []],
             ];
         }
 

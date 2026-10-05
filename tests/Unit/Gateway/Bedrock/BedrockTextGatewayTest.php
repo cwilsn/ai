@@ -447,23 +447,23 @@ test('build tool config uses auto tool choice on non final schema step', functio
     $config = textGateway()->callBuildToolConfig($schemaTools, null, false, false);
 
     expect($config['tools'])->toBe($schemaTools)
-        ->and($config['toolChoice'])->toHaveKey('auto');
+        ->and($config['toolChoice'])->toEqual(['auto' => []]);
 });
 
-test('build tool config forces structured tool on final schema step', function (): void {
+test('build tool config uses auto tool choice on final schema step', function (): void {
     $schemaTools = [['toolSpec' => ['name' => 'structured_output']]];
 
     $config = textGateway()->callBuildToolConfig($schemaTools, null, false, true);
 
-    expect($config['toolChoice'])->toEqual(['tool' => ['name' => 'structured_output']]);
+    expect($config['toolChoice'])->toEqual(['auto' => []]);
 });
 
-test('build tool config forces structured tool when no real tools provided', function (): void {
+test('build tool config uses auto tool choice when no real tools provided', function (): void {
     $schemaTools = [['toolSpec' => ['name' => 'structured_output']]];
 
     $config = textGateway()->callBuildToolConfig($schemaTools, null, true, false);
 
-    expect($config['toolChoice'])->toEqual(['tool' => ['name' => 'structured_output']]);
+    expect($config['toolChoice'])->toEqual(['auto' => []]);
 });
 
 test('build inference config is empty without options', function (): void {

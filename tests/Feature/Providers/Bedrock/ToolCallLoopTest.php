@@ -1,5 +1,7 @@
 <?php
 
+use Aws\MockHandler;
+use Aws\Result;
 use Illuminate\JsonSchema\JsonSchemaTypeFactory;
 use Laravel\Ai\Exceptions\NoSuchToolException;
 use Laravel\Ai\Gateway\TextGenerationLoop;
@@ -33,13 +35,13 @@ function bedrockTextResponse(string $text): array
 
 describe('tool call loop', function (): void {
     test('multi step tool loop returns accumulated response shape', function (): void {
-        $client = $this->fakeBedrockConverseSequence([
-            bedrockToolCallResponse('t1'),
-            bedrockToolCallResponse('t2'),
-            bedrockTextResponse('Done'),
+        $mock = new MockHandler([
+            new Result(bedrockToolCallResponse('t1')),
+            new Result(bedrockToolCallResponse('t2')),
+            new Result(bedrockTextResponse('Done')),
         ]);
 
-        $gateway = $this->gatewayWithClient($client);
+        $gateway = $this->gatewayWithClient($this->bedrockClient($mock));
 
         $response = (new TextGenerationLoop($gateway))->generate(
             $this->bedrockProvider(),
@@ -57,6 +59,12 @@ describe('tool call loop', function (): void {
             ->and($response->toolResults)->toHaveCount(2)
             ->and($response->usage->inputTokens)->toBe(21)
             ->and($response->usage->outputTokens)->toBe(11);
+
+        $parameters = $mock->getLastCommand()->toArray();
+
+        expect($parameters['toolConfig'])->toHaveKeys(['tools'])
+            ->not->toHaveKey('toolChoice')
+            ->and($parameters)->not->toHaveKey('system');
     });
 
     test('max steps limits tool call depth', function (): void {
@@ -100,21 +108,21 @@ describe('tool call loop', function (): void {
         ))->toThrow(NoSuchToolException::class);
     });
 
-    test('structured output is parsed from the synthetic tool call', function (): void {
-        $client = $this->fakeBedrockConverse([
+    test('structured output uses auto tool choice and is parsed from the synthetic tool call', function (?string $instructions): void {
+        $mock = new MockHandler([new Result([
             'output' => ['message' => ['content' => [
                 ['toolUse' => ['toolUseId' => 's1', 'name' => 'structured_output', 'input' => ['symbol' => 'Fe']]],
             ]]],
             'usage' => ['inputTokens' => 8, 'outputTokens' => 4],
             'stopReason' => 'tool_use',
-        ]);
+        ])]);
 
-        $gateway = $this->gatewayWithClient($client);
+        $gateway = $this->gatewayWithClient($this->bedrockClient($mock));
 
         $response = (new TextGenerationLoop($gateway))->generate(
             $this->bedrockProvider(),
-            'anthropic.claude-opus-4-7-v1:0',
-            null,
+            'bedrock-model',
+            $instructions,
             schema: ['symbol' => (new JsonSchemaTypeFactory)->string()],
         );
 
@@ -123,6 +131,62 @@ describe('tool call loop', function (): void {
             ->and($response->steps)->toHaveCount(1)
             ->and($response->usage->inputTokens)->toBe(8)
             ->and($response->usage->outputTokens)->toBe(4);
+
+        $parameters = $mock->getLastCommand()->toArray();
+        $system = $parameters['system'][0]['text'];
+
+        expect($parameters['toolConfig']['toolChoice'])->toBe(['auto' => []])
+            ->and($parameters['toolConfig']['tools'])->toHaveCount(1)
+            ->and($parameters['toolConfig']['tools'][0]['toolSpec']['name'])->toBe('structured_output')
+            ->and($system)->toContain('When you are ready to provide your final answer', 'must return it by calling the structured_output tool', 'Do not return the final answer as plain text');
+
+        if ($instructions) {
+            expect($system)->toStartWith($instructions."\n\n");
+        }
+    })->with([null, '', 'You are a helpful assistant.']);
+
+    test('structured output keeps normal tools available with auto selection through the final step', function (): void {
+        $parameters = [];
+        $results = [
+            bedrockToolCallResponse('t1'),
+            bedrockToolCallResponse('t2'),
+            [
+                'output' => ['message' => ['content' => [
+                    ['toolUse' => ['toolUseId' => 's1', 'name' => 'structured_output', 'input' => ['number' => 42]]],
+                ]]],
+                'stopReason' => 'tool_use',
+            ],
+        ];
+
+        $mock = new MockHandler(array_map(function (array $result) use (&$parameters) {
+            return function ($command) use ($result, &$parameters): Result {
+                $parameters[] = $command->toArray();
+
+                return new Result($result);
+            };
+        }, $results));
+
+        $response = (new TextGenerationLoop($this->gatewayWithClient($this->bedrockClient($mock))))->generate(
+            $this->bedrockProvider(),
+            'bedrock-model',
+            'Generate numbers before answering.',
+            messages: [new UserMessage('Generate numbers')],
+            tools: [new FixedNumberGenerator],
+            schema: ['number' => (new JsonSchemaTypeFactory)->integer()],
+            options: new TextGenerationOptions(maxSteps: 3),
+        );
+
+        expect($response)->toBeInstanceOf(StructuredTextResponse::class)
+            ->and($response->structured)->toBe(['number' => 42])
+            ->and($response->toolResults)->toHaveCount(2)
+            ->and($parameters)->toHaveCount(3);
+
+        foreach ($parameters as $request) {
+            expect($request['toolConfig']['toolChoice'])->toBe(['auto' => []])
+                ->and(array_column(array_column($request['toolConfig']['tools'], 'toolSpec'), 'name'))->toBe(['structured_output', 'FixedNumberGenerator'])
+                ->and($request['system'])->toBe($parameters[0]['system'])
+                ->and(substr_count($request['system'][0]['text'], 'structured_output'))->toBe(1);
+        }
     });
 
     test('streaming tool loop emits a single stream end with accumulated usage', function (): void {
