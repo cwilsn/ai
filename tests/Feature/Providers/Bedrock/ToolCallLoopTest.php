@@ -3,6 +3,7 @@
 use Aws\MockHandler;
 use Aws\Result;
 use Illuminate\JsonSchema\JsonSchemaTypeFactory;
+use Laravel\Ai\Attributes\CacheInstructions;
 use Laravel\Ai\Exceptions\NoSuchToolException;
 use Laravel\Ai\Gateway\TextGenerationLoop;
 use Laravel\Ai\Gateway\TextGenerationOptions;
@@ -108,7 +109,7 @@ describe('tool call loop', function (): void {
         ))->toThrow(NoSuchToolException::class);
     });
 
-    test('structured output uses auto tool choice and is parsed from the synthetic tool call', function (?string $instructions): void {
+    test('structured output uses auto tool choice and is parsed from the synthetic tool call', function (?string $instructions, ?array $providerSystem, bool $cacheInstructions): void {
         $mock = new MockHandler([new Result([
             'output' => ['message' => ['content' => [
                 ['toolUse' => ['toolUseId' => 's1', 'name' => 'structured_output', 'input' => ['symbol' => 'Fe']]],
@@ -124,6 +125,10 @@ describe('tool call loop', function (): void {
             'bedrock-model',
             $instructions,
             schema: ['symbol' => (new JsonSchemaTypeFactory)->string()],
+            options: new TextGenerationOptions(
+                cacheInstructions: $cacheInstructions ? new CacheInstructions : null,
+                providerOptions: $providerSystem !== null ? ['system' => $providerSystem] : null,
+            ),
         );
 
         expect($response)->toBeInstanceOf(StructuredTextResponse::class)
@@ -133,17 +138,29 @@ describe('tool call loop', function (): void {
             ->and($response->usage->outputTokens)->toBe(4);
 
         $parameters = $mock->getLastCommand()->toArray();
-        $system = $parameters['system'][0]['text'];
+        $originalSystem = $providerSystem ?? ($instructions ? [['text' => $instructions]] : []);
+        $system = $parameters['system'][count($originalSystem)]['text'] ?? '';
 
         expect($parameters['toolConfig']['toolChoice'])->toBe(['auto' => []])
             ->and($parameters['toolConfig']['tools'])->toHaveCount(1)
             ->and($parameters['toolConfig']['tools'][0]['toolSpec']['name'])->toBe('structured_output')
+            ->and(array_slice($parameters['system'], 0, count($originalSystem)))->toBe($originalSystem)
+            ->and($parameters['system'])->toHaveCount(count($originalSystem) + 1 + (int) $cacheInstructions)
+            ->and(substr_count(implode("\n", array_column($parameters['system'], 'text')), 'structured_output'))->toBe(1)
             ->and($system)->toContain('When you are ready to provide your final answer', 'must return it by calling the structured_output tool', 'Do not return the final answer as plain text');
 
-        if ($instructions) {
-            expect($system)->toStartWith($instructions."\n\n");
+        if ($cacheInstructions) {
+            expect(end($parameters['system']))->toBe(['cachePoint' => ['type' => 'default']]);
         }
-    })->with([null, '', 'You are a helpful assistant.']);
+    })->with([
+        'no instructions' => [null, null, false],
+        'empty instructions' => ['', null, false],
+        'agent instructions' => ['You are a helpful assistant.', null, false],
+        'provider system' => ['Overridden agent instructions.', [['text' => 'Provider instructions.'], ['text' => 'Additional instructions.']], false],
+        'empty provider system' => ['Overridden agent instructions.', [], false],
+        'cached agent instructions' => ['You are a helpful assistant.', null, true],
+        'cached provider system' => ['Overridden agent instructions.', [['text' => 'Provider instructions.']], true],
+    ]);
 
     test('structured output keeps normal tools available with auto selection through the final step', function (): void {
         $parameters = [];
@@ -185,7 +202,7 @@ describe('tool call loop', function (): void {
             expect($request['toolConfig']['toolChoice'])->toBe(['auto' => []])
                 ->and(array_column(array_column($request['toolConfig']['tools'], 'toolSpec'), 'name'))->toBe(['structured_output', 'FixedNumberGenerator'])
                 ->and($request['system'])->toBe($parameters[0]['system'])
-                ->and(substr_count($request['system'][0]['text'], 'structured_output'))->toBe(1);
+                ->and(substr_count(implode("\n", array_column($request['system'], 'text')), 'structured_output'))->toBe(1);
         }
     });
 

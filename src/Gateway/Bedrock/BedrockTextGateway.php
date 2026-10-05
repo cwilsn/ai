@@ -672,10 +672,6 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
 
         $providerOptions = $options?->providerOptions(Lab::Bedrock) ?? [];
 
-        if ($schemaTools !== null) {
-            $instructions = ($instructions ? $instructions."\n\n" : '').'When you are ready to provide your final answer, you must return it by calling the '.self::STRUCTURED_OUTPUT_TOOL.' tool. Do not return the final answer as plain text.';
-        }
-
         if ($instructions) {
             $parameters['system'] = [['text' => $instructions]];
         }
@@ -693,6 +689,12 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
         }
 
         $parameters = array_merge($parameters, $providerOptions);
+
+        if ($schemaTools !== null) {
+            $parameters['system'][] = [
+                'text' => 'When you are ready to provide your final answer, you must return it by calling the '.self::STRUCTURED_OUTPUT_TOOL.' tool. Do not return the final answer as plain text.',
+            ];
+        }
 
         $this->ensureValidPromptCacheOrder($options);
 
