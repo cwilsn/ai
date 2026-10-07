@@ -48,9 +48,9 @@ function textGateway(): object
             return $this->buildSchemaTools($schema, $tools);
         }
 
-        public function callBuildToolConfig(?array $schemaTools, ?array $formattedTools, bool $toolsEmpty, bool $isFinalStep): ?array
+        public function callBuildToolConfig(?array $schemaTools, ?array $formattedTools): ?array
         {
-            return $this->buildToolConfig($schemaTools, $formattedTools, $toolsEmpty, $isFinalStep);
+            return $this->buildToolConfig($schemaTools, $formattedTools);
         }
 
         public function callBuildInferenceConfig(?TextGenerationOptions $options): array
@@ -74,9 +74,7 @@ function textGateway(): object
             array $conversationMessages,
             ?array $schemaTools,
             ?array $formattedTools,
-            bool $toolsEmpty,
             ?TextGenerationOptions $options,
-            bool $isFinalStep,
         ): array {
             return $this->buildConverseParameters(
                 $model,
@@ -84,9 +82,7 @@ function textGateway(): object
                 $conversationMessages,
                 $schemaTools,
                 $formattedTools,
-                $toolsEmpty,
                 $options,
-                $isFinalStep,
             );
         }
 
@@ -431,39 +427,21 @@ test('build schema tools prepends structured output tool', function (): void {
 });
 
 test('build tool config returns null when no tools present', function (): void {
-    expect(textGateway()->callBuildToolConfig(null, null, true, false))->toBeNull();
+    expect(textGateway()->callBuildToolConfig(null, null))->toBeNull();
 });
 
 test('build tool config returns formatted tools when no schema present', function (): void {
     $formatted = [['toolSpec' => ['name' => 'X']]];
 
-    expect(textGateway()->callBuildToolConfig(null, $formatted, false, false))
+    expect(textGateway()->callBuildToolConfig(null, $formatted))
         ->toEqual(['tools' => $formatted]);
 });
 
-test('build tool config uses auto tool choice on non final schema step', function (): void {
+test('build tool config uses auto tool choice for schema tools', function (): void {
     $schemaTools = [['toolSpec' => ['name' => 'structured_output']]];
 
-    $config = textGateway()->callBuildToolConfig($schemaTools, null, false, false);
-
-    expect($config['tools'])->toBe($schemaTools)
-        ->and($config['toolChoice'])->toEqual(['auto' => []]);
-});
-
-test('build tool config uses auto tool choice on final schema step', function (): void {
-    $schemaTools = [['toolSpec' => ['name' => 'structured_output']]];
-
-    $config = textGateway()->callBuildToolConfig($schemaTools, null, false, true);
-
-    expect($config['toolChoice'])->toEqual(['auto' => []]);
-});
-
-test('build tool config uses auto tool choice when no real tools provided', function (): void {
-    $schemaTools = [['toolSpec' => ['name' => 'structured_output']]];
-
-    $config = textGateway()->callBuildToolConfig($schemaTools, null, true, false);
-
-    expect($config['toolChoice'])->toEqual(['auto' => []]);
+    expect(textGateway()->callBuildToolConfig($schemaTools, null))
+        ->toEqual(['tools' => $schemaTools, 'toolChoice' => ['auto' => []]]);
 });
 
 test('build inference config is empty without options', function (): void {
@@ -546,9 +524,7 @@ test('build converse parameters attaches system instructions', function (): void
         [['role' => 'user', 'content' => [['text' => 'hi']]]],
         null,
         null,
-        true,
         null,
-        false,
     );
 
     expect($params['modelId'])->toBe('claude-sonnet')
@@ -568,9 +544,7 @@ test('build converse parameters includes tool config and inference config when p
         [],
         null,
         $formattedTools,
-        false,
         $options,
-        false,
     );
 
     expect($params)->not->toHaveKey('system')
@@ -587,9 +561,7 @@ test('build converse parameters flat-merges agent provider options for bedrock',
         [['role' => 'user', 'content' => [['text' => 'hi']]]],
         null,
         null,
-        true,
         $options,
-        false,
     );
 
     expect($params['additionalModelRequestFields'])->toEqual([
@@ -612,9 +584,7 @@ test('build converse parameters omits provider options when agent has none', fun
         [['role' => 'user', 'content' => [['text' => 'hi']]]],
         null,
         null,
-        true,
         null,
-        false,
     );
 
     expect($params)->not->toHaveKey('additionalModelRequestFields')

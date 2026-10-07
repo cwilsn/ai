@@ -83,7 +83,7 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
     ): StepResponse {
         $client = $this->createBedrockClient($provider, $timeout);
 
-        $parameters = $this->buildStepBody($provider, $model, $instructions, $messages, $tools, $schema, $options, $stepContext);
+        $parameters = $this->buildStepBody($provider, $model, $instructions, $messages, $tools, $schema, $options);
 
         try {
             $response = $this->withErrorHandling(
@@ -116,7 +116,7 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
     ): Generator {
         $client = $this->createBedrockClient($provider, $timeout);
 
-        $parameters = $this->buildStepBody($provider, $model, $instructions, $messages, $tools, $schema, $options, $stepContext);
+        $parameters = $this->buildStepBody($provider, $model, $instructions, $messages, $tools, $schema, $options);
 
         try {
             $response = $this->withErrorHandling(
@@ -141,7 +141,6 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
         array $tools,
         ?array $schema,
         ?TextGenerationOptions $options,
-        StepContext $stepContext,
     ): array {
         $conversationMessages = $this->formatMessages($messages);
         $schemaTools = $schema ? $this->buildSchemaTools($schema, $tools) : null;
@@ -153,9 +152,7 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
             $conversationMessages,
             $schemaTools,
             $formattedTools,
-            $tools === [],
             $options,
-            isFinalStep: $stepContext->isFinalStep,
         );
     }
 
@@ -653,7 +650,6 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
      *
      * @param  array<string, mixed>|null  $schemaTools
      * @param  array<string, mixed>|null  $formattedTools  Pre-formatted real tools (used when no schema is active).
-     * @param  bool  $toolsEmpty  Whether the caller passed any real tools at all.
      */
     protected function buildConverseParameters(
         string $model,
@@ -661,9 +657,7 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
         array $conversationMessages,
         ?array $schemaTools,
         ?array $formattedTools,
-        bool $toolsEmpty,
         ?TextGenerationOptions $options,
-        bool $isFinalStep,
     ): array {
         $parameters = [
             'modelId' => $model,
@@ -676,7 +670,7 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
             $parameters['system'] = [['text' => $instructions]];
         }
 
-        $toolConfig = $this->buildToolConfig($schemaTools, $formattedTools, $toolsEmpty, $isFinalStep);
+        $toolConfig = $this->buildToolConfig($schemaTools, $formattedTools);
 
         if ($toolConfig !== null) {
             $parameters['toolConfig'] = $toolConfig;
@@ -820,7 +814,7 @@ class BedrockTextGateway implements EmbeddingGateway, StepTextGateway
      *
      * Use automatic selection for structured output since some models reject forced tool choice.
      */
-    protected function buildToolConfig(?array $schemaTools, ?array $formattedTools, bool $toolsEmpty, bool $isFinalStep): ?array
+    protected function buildToolConfig(?array $schemaTools, ?array $formattedTools): ?array
     {
         if ($schemaTools !== null) {
             return [
